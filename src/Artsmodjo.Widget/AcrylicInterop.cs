@@ -14,7 +14,9 @@ public static class AcrylicInterop
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17134)) return false;
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero) return false;
-        var policy = new AccentPolicy { State = enabled ? 4 : 0, Flags = enabled ? 2 : 0, GradientColor = enabled ? 0xCC000000u : 0 };
+
+        // 0x10 honors the nonrectangular mask; 0x02 applies the ABGR tint.
+        var policy = new AccentPolicy { State = enabled ? 4 : 0, Flags = enabled ? 0x12 : 0, GradientColor = enabled ? 0xCC000000u : 0 };
         var size = Marshal.SizeOf<AccentPolicy>();
         var pointer = Marshal.AllocHGlobal(size);
         try
@@ -56,7 +58,7 @@ public static class AcrylicInterop
         DeleteObject(region); return false;
         void AddPoint(Point point)
         {
-            var transformed = flattened.Transform.Transform(point);
+            var transformed = flattened.Transform?.Transform(point) ?? point;
             points.Add(new NativePoint { X = (int)Math.Round(transformed.X * dpi.DpiScaleX), Y = (int)Math.Round(transformed.Y * dpi.DpiScaleY) });
         }
     }

@@ -6,7 +6,11 @@ public static class WidgetLayout
 {
     public const double Width = 93;
     public const double Height = 528;
-    public const double ExpandedWidth = 444;
+    public const double NotchScale = 0.4;
+    public const double CollapsedWidth = Width * NotchScale;
+    public const double CollapsedHeight = Height * NotchScale;
+    public const double CardWidth = 300, CardHeight = 178, TailWidth = 36, CardGap = 15;
+    public const double ExpandedWidth = CardWidth + TailWidth + CardGap + CollapsedWidth;
 }
 
 public readonly record struct WidgetPosition(double Left, double Top);

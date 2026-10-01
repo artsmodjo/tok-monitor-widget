@@ -33,9 +33,10 @@ public sealed class WidgetSettings
 
     public WidgetSettings Validate()
     {
+        if (SchemaVersion != 1) throw new ArgumentOutOfRangeException(nameof(SchemaVersion), "Unsupported settings schema version.");
         if (!Enum.IsDefined(Edge)) throw new ArgumentOutOfRangeException(nameof(Edge));
         if (!Enum.IsDefined(SelectedIndicator)) throw new ArgumentOutOfRangeException(nameof(SelectedIndicator));
-        MonitorDevice ??= string.Empty;
+        MonitorDevice = (MonitorDevice ?? string.Empty).Trim();
         NormalizedY = double.IsFinite(NormalizedY) ? Math.Clamp(NormalizedY, 0, 1) : 0.5;
         return this;
     }
@@ -43,10 +44,6 @@ public sealed class WidgetSettings
 
 public sealed class SettingsStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true, Converters = { new JsonStringEnumConverter() }
-    };
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -60,7 +57,7 @@ public sealed class SettingsStore
         if (!File.Exists(_path)) return new WidgetSettings();
         try
         {
-            return (JsonSerializer.Deserialize<WidgetSettings>(File.ReadAllText(_path), JsonOptions)
+            return (JsonSerializer.Deserialize(File.ReadAllText(_path), WidgetSettingsJsonContext.Default.WidgetSettings)
                 ?? throw new InvalidDataException("The settings file contained no settings.")).Validate();
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException or ArgumentOutOfRangeException)
@@ -73,7 +70,7 @@ public sealed class SettingsStore
     {
         ArgumentNullException.ThrowIfNull(settings);
         var snapshot = settings.CloneSnapshot();
-        var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(snapshot, JsonOptions));
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(snapshot, WidgetSettingsJsonContext.Default.WidgetSettings);
         var directory = Path.GetDirectoryName(_path) ?? throw new IOException("The settings file has no parent directory.");
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         string? temporaryPath = null;
@@ -101,3 +98,7 @@ public sealed class SettingsStore
         }
     }
 }
+
+[JsonSourceGenerationOptions(WriteIndented = true, UseStringEnumConverter = true)]
+[JsonSerializable(typeof(WidgetSettings))]
+internal partial class WidgetSettingsJsonContext : JsonSerializerContext { }

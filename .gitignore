@@ -11,3 +11,4 @@ obj/
 *.pdb
 *.log
 settings.local.json
+*_wpftmp.csproj

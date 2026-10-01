@@ -38,6 +38,8 @@ internal static class Program
         var copy = source.CloneSnapshot(); Equal(0.5, copy.NormalizedY); Equal(string.Empty, copy.MonitorDevice);
         source.NormalizedY = 3; Equal(1.0, source.Validate().NormalizedY);
         source.NormalizedY = -2; Equal(0.0, source.Validate().NormalizedY);
+        Throws<ArgumentOutOfRangeException>(() => new WidgetSettings { SchemaVersion = 2 }.Validate());
+        Equal("DISPLAY1", new WidgetSettings { MonitorDevice = "  DISPLAY1  " }.Validate().MonitorDevice);
         Equal(0, (int)WidgetEdge.Right); Equal(1, (int)WidgetEdge.Left);
         Throws<ArgumentOutOfRangeException>(() => new WidgetSettings { Edge = (WidgetEdge)22 }.Validate());
     }
@@ -47,6 +49,11 @@ internal static class Program
         try
         {
             var store = new SettingsStore(Path.Combine(directory, "settings.json"));
+            await store.SaveAsync(new WidgetSettings { NormalizedY = 0.8, IsPinned = true, Edge = WidgetEdge.Left });
+            var text = File.ReadAllText(Path.Combine(directory, "settings.json"));
+            True(text.Contains("\"Edge\": \"Left\""));
+            File.WriteAllText(Path.Combine(directory, "settings.json"), "{\"Edge\":1,\"SelectedIndicator\":2}", new System.Text.UTF8Encoding(true));
+            var numeric = store.Load(); Equal(WidgetEdge.Left, numeric.Edge); Equal(WidgetIndicator.Ram, numeric.SelectedIndicator);
             await store.SaveAsync(new WidgetSettings { NormalizedY = 0.8, IsPinned = true, Edge = WidgetEdge.Left });
             var loaded = store.Load(); Equal(0.8, loaded.NormalizedY); True(loaded.IsPinned); Equal(WidgetEdge.Left, loaded.Edge);
             await Task.WhenAll(Enumerable.Range(0, 12).Select(index => store.SaveAsync(new WidgetSettings { NormalizedY = index / 11.0 })));

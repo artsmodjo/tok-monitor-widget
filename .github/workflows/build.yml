@@ -1,0 +1,21 @@
+name: Windows build and core tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore Artsmodjo.Widget.sln
+      - name: Build
+        run: dotnet build Artsmodjo.Widget.sln --configuration Release --no-restore
+      - name: Core tests
+        run: dotnet run --project tests/Artsmodjo.Core.Tests/Artsmodjo.Core.Tests.csproj --configuration Release --no-build

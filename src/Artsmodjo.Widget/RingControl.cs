@@ -1,9 +1,7 @@
 using System;
 using System.Globalization;
-using System.Linq;
 using System.Reflection;
 using System.Xml;
-using System.Xml.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -22,7 +20,7 @@ public sealed class RingControl : FrameworkElement
     private static readonly Brush ForegroundBrush = CreateBrush(Colors.White);
     private static readonly Brush FocusBrush = CreateBrush(Color.FromArgb(160, 255, 255, 255));
     private static readonly Typeface LabelTypeface = new("Segoe UI");
-    private static readonly Geometry?[] Logos = { LoadLogoGeometry("claude"), LoadLogoGeometry("openai"), LoadLogoGeometry("perplexity") };
+    private static readonly Geometry?[] Logos = { LoadLogoGeometry("claude"), LoadLogoGeometry("openai"), LoadLogoGeometry("computer") };
     private Geometry? _arcGeometry;
     private double _arcSweep = double.NaN;
     public RingControl() { Width = WidgetLayout.Width; Height = 105; Focusable = true; Cursor = Cursors.Hand; }
@@ -91,9 +89,13 @@ public sealed class RingControl : FrameworkElement
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream($"Artsmodjo.Widget.Assets.{name}.svg");
         if (stream is null) throw new InvalidOperationException("Missing embedded logo: " + name);
         using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
-        var document = XDocument.Load(reader);
         var geometry = new GeometryGroup();
-        foreach (var path in document.Descendants().Where(element => element.Name.LocalName == "path").Select(element => (string?)element.Attribute("d")).Where(path => !string.IsNullOrWhiteSpace(path))) geometry.Children.Add(Geometry.Parse("F1 " + path));
+        while (reader.Read())
+        {
+            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "path" &&
+                reader.GetAttribute("d") is string path && !string.IsNullOrWhiteSpace(path))
+                geometry.Children.Add(Geometry.Parse("F1 " + path));
+        }
         geometry.Freeze(); return geometry;
     }
     private sealed class RingControlAutomationPeer : FrameworkElementAutomationPeer, IInvokeProvider
