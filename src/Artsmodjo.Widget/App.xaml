@@ -1,0 +1,6 @@
+<Application x:Class="Artsmodjo.Widget.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <SolidColorBrush x:Key="WhiteText" Color="#F5F5F5" />
+    <SolidColorBrush x:Key="MutedText" Color="#9B9B9B" />
+  </Application.Resources>
+</Application>

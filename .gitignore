@@ -1,0 +1,13 @@
+.tools/
+docs/
+blueprint/
+logs/
+artifacts/
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.pdb
+*.log
+settings.local.json
