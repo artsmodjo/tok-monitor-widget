@@ -3,7 +3,8 @@ param(
     [ValidateRange(1,10000)][int]$StartupCount=30,
     [ValidateRange(0,86400)][int]$WarmupSeconds=600,
     [ValidateRange(1,86400)][int]$MeasureSeconds=1800,
-    [switch]$SoftwareRendering
+    [switch]$SoftwareRendering,
+    [switch]$ExerciseUi
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -25,6 +26,7 @@ function Start-Widget([string]$name,[int]$exitMs) {
     Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8
     $appArgs=@('--ready-file',(Q $ready),'--settings',(Q $settings),'--exit-after-ms',"$exitMs")
     if ($SoftwareRendering) { $appArgs += '--software-rendering' }
+    if ($ExerciseUi -and $name -eq 'cpu') { $appArgs += '--exercise-ui' }
     $arguments=$appArgs -join ' '
     $watch=[Diagnostics.Stopwatch]::StartNew()
     $p=Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden -PassThru
@@ -68,6 +70,7 @@ $private=[Collections.Generic.List[double]]::new()
 $cpuLaunch=$null; $machineCounter=$null; $failure=$null; $status='failed'
 $measurementStartAt=$null; $measurementStartCpu=$null; $measurementEndAt=$null; $measurementEndCpu=$null
 $childStart=$null; $childEnd=$null; $counterNote=$null
+$uiExerciseTicks=$null; $uiExerciseCycles=$null
 try {
     $cpuLaunch=Start-Widget 'cpu' (($WarmupSeconds+$MeasureSeconds+120)*1000)
     $p=$cpuLaunch.Process
@@ -97,15 +100,25 @@ try {
     $childEnd=@(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($p.Id)").Count
     if ($childEnd -ne 0) { throw 'Owned child process detected.' }
     if (-not $p.WaitForExit(150000)) { throw 'Exit timer did not complete.' }
+    if ($ExerciseUi) {
+        $markerPath=Join-Path $runDir 'cpu.ready.json.exercise-complete'
+        if (-not (Test-Path -LiteralPath $markerPath)) { throw 'UI exercise completion marker missing.' }
+        $markerTicks=0
+        if (-not [int]::TryParse([IO.File]::ReadAllText($markerPath),[ref]$markerTicks) -or $markerTicks -ne 60) { throw 'UI exercise completion marker did not report 60 ticks.' }
+        $uiExerciseTicks=$markerTicks; $uiExerciseCycles=[int]($markerTicks/2)
+    }
     if ($p.ExitCode -ne 0) { throw 'App exited with error.' }
     $status='completed'
 } catch { $failure=$_.Exception.Message }
 finally { if ($null -ne $cpuLaunch) { Stop-Owned $cpuLaunch.Process }; if ($null -ne $machineCounter) { $machineCounter.Dispose() } }
 $weighted=if ($null -ne $measurementEndAt -and $measurementEndAt -gt $measurementStartAt) { 100*($measurementEndCpu-$measurementStartCpu)/($measurementEndAt-$measurementStartAt)/$logical } else { $null }
+$notes=@('Warm file caches; cold launches unmeasured.','Ready marker follows rendered widget, WPF automation invoke, tray registration and programmatic tray menu opening; physical tray click unmeasured.','CPU is exact app PID; child process counts checked at start/end.','No monitoring loop exists in fixture-only Milestone 1.')
+if ($ExerciseUi) { $notes += 'Exercise enabled: finite 30 card open/close pairs at 500 ms intervals after readiness.' }
 $summary=[pscustomobject]@{
     Executable=$exe;RunDirectory=$runDir;Status=$status;Failure=$failure
     RenderingPreference='SoftwareOnly'
-    Notes=@('Warm file caches; cold launches unmeasured.','Ready marker follows rendered widget, WPF automation invoke, tray registration and programmatic tray menu opening; physical tray click unmeasured.','CPU is exact app PID; child process counts checked at start/end.','No monitoring loop exists in fixture-only Milestone 1.')
+    UiExerciseEnabled=[bool]$ExerciseUi;UiExerciseTicks=$uiExerciseTicks;UiExerciseCycles=$uiExerciseCycles
+    Notes=$notes
     Hardware=[pscustomobject]@{LogicalProcessors=$logical;Processor=(Get-CimInstance Win32_Processor | Select-Object Name,NumberOfLogicalProcessors);OS=(Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,TotalVisibleMemorySize)}
     WarmStartupMilliseconds=(Stats ($startup.ToArray()))
     WarmupSeconds=$WarmupSeconds;RequestedMeasurementSeconds=$MeasureSeconds;CompletedMeasurementSamples=$cpuValues.Count

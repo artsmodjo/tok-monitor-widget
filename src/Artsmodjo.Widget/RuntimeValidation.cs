@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -63,13 +63,20 @@ internal static class RuntimeValidation
             Check(window.IsVisible && Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1, $"Visible collapsed window (width {window.ActualWidth}, expected {WidgetLayout.CollapsedWidth * window.WidgetScale}, railLeft {System.Windows.Controls.Canvas.GetLeft(window.RailCanvas)})", report);
             Mark($"collapsed layout left={System.Windows.Controls.Canvas.GetLeft(window.RailCanvas)} rootWidth={window.RootCanvas.Width} windowWidth={window.ActualWidth}");
             CaptureMemorySnapshot(report, "ready-collapsed-settled");
+            await CheckHoverAndSurfaceTransitionsAsync(window, report);
             CaptureWindow(window, Path.Combine(outputDirectory, "window-collapsed.png"));
             CaptureRendered(window, Path.Combine(outputDirectory, "collapsed.png"), 1);
             vm.IsPinned = true; vm.Open(0); await WaitForWidth(window, WidgetLayout.ExpandedWidth);
             Check(Math.Abs(window.ActualWidth - WidgetLayout.ExpandedWidth * window.WidgetScale) < 1, $"Expand animation reaches final width (actual {window.ActualWidth:0.##}, expanded {vm.IsExpanded})", report);
+            vm.AcrylicEnabled = false;
+            await window.Dispatcher.InvokeAsync(static () => { }, System.Windows.Threading.DispatcherPriority.Render);
+            await window.Dispatcher.InvokeAsync(static () => { }, System.Windows.Threading.DispatcherPriority.Background);
+            window.UpdateLayout();
             vm.IsPinned = true; vm.Close(); await Task.Delay(220);
             Check(vm.IsExpanded, "Pin preserves open card", report);
-            CaptureRendered(window, Path.Combine(outputDirectory, "pinned.png"), 1);
+            var pinnedPath = Path.Combine(outputDirectory, "pinned.png");
+            CaptureRendered(window, pinnedPath, 1);
+            CheckOpaqueCardPixel(pinnedPath, window, "Pinned", report);
             vm.IsPinned = false; vm.Close(); await WaitForWidth(window, WidgetLayout.CollapsedWidth);
             Check(Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1, "Collapse animation reaches final width", report);
             CaptureMemorySnapshot(report, "after-expand-collapse-and-screenshots");
@@ -77,7 +84,9 @@ internal static class RuntimeValidation
             var primary = WidgetMonitors.PrimaryScreen;
             vm.Edge = WidgetEdge.Left; window.ApplyState(false);
             Check(Math.Abs(window.PointToScreen(new Point()).X - primary.WorkingArea.Left) < 2, "Left docking at work area edge", report);
-            CaptureRendered(window, Path.Combine(outputDirectory, "dock-left.png"), 1);
+            var dockLeftPath = Path.Combine(outputDirectory, "dock-left.png");
+            CaptureRendered(window, dockLeftPath, 1);
+            CheckOpaqueCardPixel(dockLeftPath, window, "Left-docked", report);
             vm.Edge = WidgetEdge.Right; window.ApplyState(false);
             Check(Math.Abs(window.PointToScreen(new Point(window.ActualWidth, 0)).X - primary.WorkingArea.Right) < 2, "Right docking at work area edge", report);
             ValidateRegion(window, report);
@@ -255,14 +264,21 @@ internal static class RuntimeValidation
     }
     private static async Task WaitForWidth(MainWindow window, double target)
     {
+        var expanded = Math.Abs(target - WidgetLayout.ExpandedWidth) < 0.01;
         target *= window.WidgetScale;
+        var targetOpacity = expanded ? 1 : 0;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         do
         {
-            await Task.Delay(50);
-            if (Math.Abs(window.ActualWidth - target) < 1) break;
+            await Task.Delay(20);
+            var surfaceReady = window.UsageCard.Opacity == targetOpacity && window.CardTail.Opacity == targetOpacity && !window.UsageCard.HasAnimatedProperties && !window.CardTail.HasAnimatedProperties &&
+                window.UsageCard.Visibility == (expanded ? Visibility.Visible : Visibility.Collapsed) && window.CardTail.Visibility == (expanded ? Visibility.Visible : Visibility.Collapsed);
+            if (Math.Abs(window.ActualWidth - target) < 1 && surfaceReady) break;
         } while (clock.ElapsedMilliseconds < 2000);
         Mark($"width settle elapsed={clock.ElapsedMilliseconds} actual={window.ActualWidth} width={window.Width} base={window.GetAnimationBaseValue(Window.WidthProperty)} expanded={window.ViewModel.IsExpanded}");
+        await window.Dispatcher.InvokeAsync(static () => { }, System.Windows.Threading.DispatcherPriority.Render);
+        await window.Dispatcher.InvokeAsync(static () => { }, System.Windows.Threading.DispatcherPriority.Background);
+        window.UpdateLayout();
     }
     private static void CaptureMemorySnapshot(ValidationReport report, string phase)
     {
@@ -296,10 +312,107 @@ internal static class RuntimeValidation
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("gdi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PtInRegion(IntPtr region, int x, int y);
     [DllImport("gdi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeleteObject(IntPtr handle);
+    private static async Task CheckHoverAndSurfaceTransitionsAsync(MainWindow window, ValidationReport report)
+    {
+        var vm = window.ViewModel;
+        var originalPinned = vm.IsPinned;
+        var originalReducedMotion = vm.ReducedMotion;
+        var originalIndicator = vm.SelectedIndicator;
+        var nativeAnimations = SystemParameters.ClientAreaAnimation;
+        var expandedWidth = WidgetLayout.ExpandedWidth * window.WidgetScale;
+        double RailScreenX() => window.PointToScreen(new Point(System.Windows.Controls.Canvas.GetLeft(window.RailCanvas), 0)).X;
+        try
+        {
+            vm.IsPinned = false;
+            vm.ReducedMotion = false;
+            var railX = RailScreenX();
+            var widthBeforeOpen = window.Width;
+            vm.Open(0);
+            var widthAfterOpen = window.Width;
+            var actualAfterOpen = window.ActualWidth;
+            var widthAnimated = DependencyPropertyHelper.GetValueSource(window, Window.WidthProperty).IsAnimated;
+            Check(Math.Abs(widthAfterOpen - expandedWidth) < 1 && !widthAnimated,
+                $"Open changes native width once (widthBefore={widthBeforeOpen:0.##}, widthAfter={widthAfterOpen:0.##}, actualAfter={actualAfterOpen:0.##}, target={expandedWidth:0.##}, widthAnimated={widthAnimated})", report);
+            var cardOpacityAnimated = window.UsageCard.HasAnimatedProperties;
+            var tailOpacityAnimated = window.CardTail.HasAnimatedProperties;
+            if (nativeAnimations)
+                Check(cardOpacityAnimated && tailOpacityAnimated,
+                    $"Open uses finite card and tail opacity animations (system={nativeAnimations}, card={cardOpacityAnimated}, tail={tailOpacityAnimated})", report);
+            await Task.Delay(20);
+            var railAfterOpenSettle = RailScreenX();
+            Check(Math.Abs(window.ActualWidth - expandedWidth) < 1 && Math.Abs(railAfterOpenSettle - railX) <= 1,
+                $"Open fade keeps native width and rail anchor within one physical pixel (actual={window.ActualWidth:0.##}, target={expandedWidth:0.##}, railBefore={railX:0.##}, railAfter={railAfterOpenSettle:0.##})", report);
+            await WaitForWidth(window, WidgetLayout.ExpandedWidth);
+
+            railX = RailScreenX();
+            vm.Close();
+            if (nativeAnimations)
+                Check(Math.Abs(window.Width - expandedWidth) < 1 && window.UsageCard.Visibility == Visibility.Visible &&
+                      !DependencyPropertyHelper.GetValueSource(window, Window.WidthProperty).IsAnimated &&
+                      window.UsageCard.HasAnimatedProperties &&
+                      window.CardTail.HasAnimatedProperties,
+                    "Close animates only card and tail opacity while keeping native width", report);
+            else
+                Check(Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1, "Reduced system animation closes immediately", report);
+            await Task.Delay(20);
+            if (nativeAnimations)
+            {
+                var closeFadeActive = window.UsageCard.HasAnimatedProperties && window.CardTail.HasAnimatedProperties;
+                var expectedCloseWidth = closeFadeActive ? expandedWidth : WidgetLayout.CollapsedWidth * window.WidgetScale;
+                var railAfterCloseSettle = RailScreenX();
+                Check(Math.Abs(window.ActualWidth - expectedCloseWidth) < 1 && Math.Abs(railAfterCloseSettle - railX) <= 1,
+                    $"Close keeps native width at a transition boundary and rail anchor within one physical pixel (fadeActive={closeFadeActive}, width={window.ActualWidth:0.##}, expected={expectedCloseWidth:0.##}, railBefore={railX:0.##}, railAfter={railAfterCloseSettle:0.##})", report);
+            }
+            await WaitForWidth(window, WidgetLayout.CollapsedWidth);
+
+            vm.Open(0); await Task.Delay(20); vm.Close(); await Task.Delay(20); vm.Open(0);
+            await WaitForWidth(window, WidgetLayout.ExpandedWidth);
+            Check(vm.IsExpanded && Math.Abs(window.ActualWidth - expandedWidth) < 1 && window.UsageCard.Opacity == 1 && window.CardTail.Opacity == 1 && window.UsageCard.Visibility == Visibility.Visible,
+                $"Rapid open-close-open settles fully open (expanded={vm.IsExpanded}, actualWidth={window.ActualWidth:0.##}, cardOpacity={window.UsageCard.Opacity:0.####}, tailOpacity={window.CardTail.Opacity:0.####}, cardClock={window.UsageCard.HasAnimatedProperties}, tailClock={window.CardTail.HasAnimatedProperties}, visibility={window.UsageCard.Visibility})", report);
+            vm.Close(); await Task.Delay(20); vm.Open(0); await Task.Delay(20); vm.Close();
+            await WaitForWidth(window, WidgetLayout.CollapsedWidth);
+            Check(!vm.IsExpanded && Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1 &&
+                  window.UsageCard.Opacity == 0 && window.CardTail.Opacity == 0 && window.UsageCard.Visibility == Visibility.Collapsed,
+                $"Rapid close-open-close settles fully closed (expanded={vm.IsExpanded}, actualWidth={window.ActualWidth:0.##}, cardOpacity={window.UsageCard.Opacity:0.####}, tailOpacity={window.CardTail.Opacity:0.####}, cardClock={window.UsageCard.HasAnimatedProperties}, tailClock={window.CardTail.HasAnimatedProperties}, visibility={window.UsageCard.Visibility})", report);
+
+            vm.Open(0); await WaitForWidth(window, WidgetLayout.ExpandedWidth);
+            vm.IsPinned = false;
+            Keyboard.ClearFocus();
+            var cardPoint = window.PointToScreen(new Point(System.Windows.Controls.Canvas.GetLeft(window.UsageCard) + 10, System.Windows.Controls.Canvas.GetTop(window.UsageCard) + 10));
+            var railPoint = window.PointToScreen(new Point(System.Windows.Controls.Canvas.GetLeft(window.RailCanvas) + 10, 100));
+            var gapX = vm.Edge == WidgetEdge.Left ? WidgetLayout.CollapsedWidth + WidgetLayout.CardGap / 2 : System.Windows.Controls.Canvas.GetLeft(window.RailCanvas) - WidgetLayout.CardGap / 2;
+            var gapPoint = window.PointToScreen(new Point(gapX, 100));
+            Check(!window.EvaluateCollapsePointer(cardPoint) && vm.IsExpanded && !window.CollapseTimerPending, "Pointer over card retains expansion without polling", report);
+            Check(!window.EvaluateCollapsePointer(railPoint) && vm.IsExpanded && !window.CollapseTimerPending, "Pointer over rail retains expansion without polling", report);
+            var gapLocalPoint = window.PointFromScreen(gapPoint); var gapHitType = window.InputHitTest(gapLocalPoint)?.GetType().FullName ?? "<null>"; Check(window.IsBlankClientPoint(gapPoint), $"Injected rail-card gap point is blank (screen={gapPoint}, local={gapLocalPoint}, gapX={gapX:0.##}, railLeft={System.Windows.Controls.Canvas.GetLeft(window.RailCanvas):0.##}, cardTailLeft={System.Windows.Controls.Canvas.GetLeft(window.CardTail):0.##}, hit={gapHitType})", report);
+            Check(!window.EvaluateCollapsePointer(gapPoint) && vm.IsExpanded && window.CollapseTimerPending, "Pointer in transparent rail-card gap retains expansion and polls", report);
+            var outsidePoint = window.PointToScreen(new Point(window.ActualWidth + 20, 100));
+            Check(window.EvaluateCollapsePointer(outsidePoint) && !vm.IsExpanded, "Pointer outside window closes expansion", report);
+            await WaitForWidth(window, WidgetLayout.CollapsedWidth);
+            vm.IsPinned = true; vm.Open(0); await WaitForWidth(window, WidgetLayout.ExpandedWidth);
+            Check(!window.EvaluateCollapsePointer(outsidePoint) && vm.IsExpanded, "Pinned card remains open outside window", report);
+        }
+        finally
+        {
+            vm.Close(force: true);
+            vm.SelectedIndicator = originalIndicator;
+            vm.IsPinned = originalPinned;
+            vm.ReducedMotion = originalReducedMotion;
+            window.ApplyState(false);
+        }
+    }
     private static void Check(bool condition, string assertion, ValidationReport report)
     {
         if (!condition) throw new InvalidOperationException("Validation failed: " + assertion);
         report.Assertions.Add(assertion);
+    }
+    private static void CheckOpaqueCardPixel(string path, MainWindow window, string state, ValidationReport report)
+    {
+        var image = ReadPixels(path);
+        var point = window.UsageCard.TranslatePoint(new Point(280, 90), window);
+        var pixel = PixelAt(image, (int)Math.Round(point.X), (int)Math.Round(point.Y));
+        Check(pixel.R <= 3 && pixel.G <= 3 && pixel.B <= 3,
+            $"{state} synthetic screenshot shows opaque black card interior away from text: {pixel} at ({point.X:0.##},{point.Y:0.##})", report);
     }
     private static void CaptureRendered(MainWindow window, string path, double scale)
     {

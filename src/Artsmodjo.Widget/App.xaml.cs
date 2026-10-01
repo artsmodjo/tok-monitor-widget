@@ -14,6 +14,7 @@ public partial class App : System.Windows.Application
 {
     private Mutex? _instanceMutex;
     private bool _ownsMutex;
+    private bool _exitScheduled;
     private MainWindow? _mainWindow;
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -66,9 +67,30 @@ public partial class App : System.Windows.Application
 
         void ScheduleExit()
         {
+            if (_exitScheduled) return;
+            _exitScheduled = true;
             if (options.ExitAfterMilliseconds is not int delay) return;
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delay) };
             timer.Tick += (_, _) => { timer.Stop(); _mainWindow.Close(); };
+            timer.Start();
+            if (options.ExerciseUi) ScheduleUiExercise();
+        }
+
+        void ScheduleUiExercise()
+        {
+            var ticks = 0;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            timer.Tick += (_, _) =>
+            {
+                if (ticks % 2 == 0) _mainWindow.ViewModel.Open((ticks / 2) % 3);
+                else _mainWindow.ViewModel.Close(force: true);
+                ticks++;
+                if (ticks == 60)
+                {
+                    timer.Stop();
+                    File.WriteAllText(options.ReadyFile! + ".exercise-complete", "60");
+                }
+            };
             timer.Start();
         }
     }
@@ -78,18 +100,20 @@ public partial class App : System.Windows.Application
         if (_ownsMutex && _instanceMutex is not null) { _instanceMutex.ReleaseMutex(); _ownsMutex = false; }
         _instanceMutex?.Dispose(); base.OnExit(e);
     }
-    private sealed record StartupOptions(string? ValidationDirectory, string? SettingsPath, string? ReadyFile, int? ExitAfterMilliseconds, bool SoftwareRendering)
+    private sealed record StartupOptions(string? ValidationDirectory, string? SettingsPath, string? ReadyFile, int? ExitAfterMilliseconds, bool SoftwareRendering, bool ExerciseUi)
     {
         public static StartupOptions Parse(string[] args)
         {
             string? validation = null, settings = null, ready = null;
             int? delay = null;
             var software = true; // Measured lower working set for this small, mostly static widget.
+            var exerciseUi = false;
             for (var i = 0; i < args.Length; i++)
             {
                 switch (args[i])
                 {
                     case "--software-rendering": software = true; break;
+                    case "--exercise-ui": exerciseUi = true; break;
                     case "--validate": validation = Next(args, ref i); break;
                     case "--settings": settings = Next(args, ref i); break;
                     case "--ready-file": ready = Next(args, ref i); break;
@@ -99,7 +123,8 @@ public partial class App : System.Windows.Application
                     default: throw new ArgumentException("Unknown startup argument: " + args[i]);
                 }
             }
-            return new(validation, settings, ready, delay, software);
+            if (exerciseUi && (settings is null || ready is null || delay is null)) throw new ArgumentException("UI exercise requires an explicit settings path, ready file, and positive exit delay.");
+            return new(validation, settings, ready, delay, software, exerciseUi);
         }
         private static string Next(string[] args, ref int index)
         {

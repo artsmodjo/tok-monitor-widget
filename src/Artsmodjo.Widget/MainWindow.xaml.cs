@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -27,7 +27,7 @@ public partial class MainWindow : Window, IDisposable
     private readonly DispatcherTimer _collapseTimer;
     private WidgetMonitor _screen = WidgetMonitors.PrimaryScreen;
     private HwndSource? _source;
-    private bool _disposed, _dragPending, _isDragging, _positioning;
+    private bool _disposed, _dragPending, _isDragging, _positioning, _cardSurfaceVisible;
     private Point _dragStartScreen;
     private double _dragStartTopPixels, _scale = 1;
     private Task<bool> _settingsSaveTail = Task.FromResult(true);
@@ -35,6 +35,7 @@ public partial class MainWindow : Window, IDisposable
     private int _applyStateGeneration;
     internal bool RegionApplied { get; private set; }
     internal bool AcrylicApplied { get; private set; }
+    internal bool CollapseTimerPending => _collapseTimer.IsEnabled;
 
     public MainWindow(WidgetSettings settings, SettingsStore? store = null, bool canPersist = true)
     {
@@ -48,7 +49,7 @@ public partial class MainWindow : Window, IDisposable
         DataContext = ViewModel;
         Topmost = ViewModel.IsTopmost;
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _collapseTimer.Tick += (_, _) => { _collapseTimer.Stop(); if (!IsMouseOver && !IsKeyboardFocusWithin) ViewModel.Close(); };
+        _collapseTimer.Tick += (_, _) => CollapseTimer_Tick();
         TrayMenu = CreateTrayMenu();
 
 
@@ -126,6 +127,7 @@ public partial class MainWindow : Window, IDisposable
             case nameof(WidgetViewModel.IsTopmost): Topmost = ViewModel.IsTopmost; break;
             case nameof(WidgetViewModel.AcrylicEnabled): ApplyAcrylic(); break;
             case nameof(WidgetViewModel.DemoDataEnabled): SetDemoValues(); break;
+            case nameof(WidgetViewModel.IsPinned): if (ViewModel.IsPinned) _collapseTimer.Stop(); break;
         }
         if (e.PropertyName == nameof(WidgetViewModel.Settings) && !_dragPending && IsLoaded) _ = SaveSettingsAsync();
     }
@@ -133,21 +135,55 @@ public partial class MainWindow : Window, IDisposable
     {
         var generation = ++_applyStateGeneration;
         var expanded = ViewModel.IsExpanded;
-        var target = (expanded ? WidgetLayout.ExpandedWidth : WidgetLayout.CollapsedWidth) * _scale;
-        var current = Width;
-        BeginAnimation(WidthProperty, null);
-        Width = target;
-        UsageCard.Visibility = CardTail.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
-        if (animate && !ViewModel.ReducedMotion && SystemParameters.ClientAreaAnimation)
+        var targetWidth = (expanded ? WidgetLayout.ExpandedWidth : WidgetLayout.CollapsedWidth) * _scale;
+        // Resize the native window only at transition boundaries; opacity fades avoid per-frame HWND and region updates.
+        var currentOpacity = UsageCard.Opacity;
+        UsageCard.BeginAnimation(OpacityProperty, null);
+        CardTail.BeginAnimation(OpacityProperty, null);
+        UsageCard.Opacity = currentOpacity;
+        CardTail.Opacity = currentOpacity;
+        var animateSurface = animate && !ViewModel.ReducedMotion && SystemParameters.ClientAreaAnimation;
+
+        if (expanded)
         {
-            var animation = new DoubleAnimation(current, target, TimeSpan.FromMilliseconds(expanded ? 160 : 120)) { FillBehavior = FillBehavior.HoldEnd, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-            animation.Completed += (_, _) =>
-            {
-                if (generation != _applyStateGeneration) return;
-                BeginAnimation(WidthProperty, null); Width = target; DockAndLayout();
-            };
-            BeginAnimation(WidthProperty, animation);
+            _collapseTimer.Stop();
+            _cardSurfaceVisible = true;
+            UsageCard.Visibility = CardTail.Visibility = Visibility.Visible;
+            Width = targetWidth;
+            DockAndLayout();
+            if (animateSurface) AnimateCardSurface(1, TimeSpan.FromMilliseconds(160), generation);
+            else FinishCardSurfaceTransition(generation, true);
+            return;
         }
+
+        if (animateSurface && _cardSurfaceVisible)
+        {
+            AnimateCardSurface(0, TimeSpan.FromMilliseconds(120), generation);
+            return;
+        }
+
+        FinishCardSurfaceTransition(generation, false);
+    }
+    private void AnimateCardSurface(double targetOpacity, TimeSpan duration, int generation)
+    {
+        var animation = new DoubleAnimation(UsageCard.Opacity, targetOpacity, duration)
+        {
+            FillBehavior = FillBehavior.HoldEnd,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        animation.Completed += (_, _) => FinishCardSurfaceTransition(generation, targetOpacity == 1);
+        UsageCard.BeginAnimation(OpacityProperty, animation);
+        CardTail.BeginAnimation(OpacityProperty, animation);
+    }
+    private void FinishCardSurfaceTransition(int generation, bool visible)
+    {
+        if (generation != _applyStateGeneration) return;
+        UsageCard.BeginAnimation(OpacityProperty, null);
+        CardTail.BeginAnimation(OpacityProperty, null);
+        UsageCard.Opacity = CardTail.Opacity = visible ? 1 : 0;
+        _cardSurfaceVisible = visible;
+        UsageCard.Visibility = CardTail.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible) Width = WidgetLayout.CollapsedWidth * _scale;
         DockAndLayout();
     }
     private void SetDemoValues()
@@ -184,16 +220,53 @@ public partial class MainWindow : Window, IDisposable
         var rail = RailShape.Data.Clone();
         var railTransform = new TransformGroup(); railTransform.Children.Add(RailShape.RenderTransform); railTransform.Children.Add(RailCanvas.RenderTransform); railTransform.Children.Add(new TranslateTransform(Canvas.GetLeft(RailCanvas), 0));
         rail.Transform = railTransform; geometry.Children.Add(rail);
-        if (ViewModel.IsExpanded)
+        if (ViewModel.IsExpanded || _cardSurfaceVisible)
         {
             geometry.Children.Add(new RectangleGeometry(new Rect(Canvas.GetLeft(UsageCard), Canvas.GetTop(UsageCard), 300, 178), 25, 25));
             var tail = CardTail.Data.Clone(); var transform = new TransformGroup(); transform.Children.Add(CardTail.RenderTransform); transform.Children.Add(new TranslateTransform(Canvas.GetLeft(CardTail), Canvas.GetTop(CardTail))); tail.Transform = transform; geometry.Children.Add(tail);
         }
         RegionApplied = AcrylicInterop.UpdateRegion(this, geometry);
     }
+    private void CollapseTimer_Tick()
+    {
+        _collapseTimer.Stop();
+        if (!GetCursorPos(out var point)) { _collapseTimer.Start(); return; }
+        EvaluateCollapsePointer(new Point(point.X, point.Y));
+    }
+    internal bool EvaluateCollapsePointer(Point physicalScreenPoint)
+    {
+        if (!IsVisible || !ViewModel.IsExpanded || ViewModel.IsPinned || IsKeyboardFocusWithin || _dragPending || _isDragging)
+        {
+            _collapseTimer.Stop();
+            return false;
+        }
+        var localPoint = PointFromScreen(physicalScreenPoint);
+        // The HWND rectangle includes the transparent rail/card gap; only polling that gap keeps it non-hit-testable.
+        if (new Rect(0, 0, ActualWidth, ActualHeight).Contains(localPoint))
+        {
+            if (IsBlankClientPoint(physicalScreenPoint)) _collapseTimer.Start();
+            else _collapseTimer.Stop();
+            return false;
+        }
+        _collapseTimer.Stop();
+        ViewModel.Close();
+        return true;
+    }
+    internal bool IsBlankClientPoint(Point physicalScreenPoint)
+    {
+        var rootPoint = TranslatePoint(PointFromScreen(physicalScreenPoint), RootCanvas);
+        var hit = RootCanvas.InputHitTest(rootPoint);
+        return hit is null || ReferenceEquals(hit, RootCanvas);
+    }
+    // GetCursorPos reports physical screen pixels; PointFromScreen converts them to WPF coordinates.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint { public int X; public int Y; }
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
     private void Window_MouseEnter(object sender, MouseEventArgs e) => _collapseTimer.Stop();
     private void Ring_MouseEnter(object sender, MouseEventArgs e) { if (!_dragPending && sender is RingControl ring) ViewModel.Open(ring.IconIndex); }
-    private void Window_MouseLeave(object sender, MouseEventArgs e) { if (!_dragPending) { _collapseTimer.Stop(); _collapseTimer.Start(); } }
+    private void Window_MouseLeave(object sender, MouseEventArgs e) { if (!_dragPending) { _collapseTimer.Stop(); if (!ViewModel.IsPinned && !IsKeyboardFocusWithin) _collapseTimer.Start(); } }
     private void Ring_OpenRequested(object sender, RoutedEventArgs e) { if (sender is RingControl ring) ViewModel.Open(ring.IconIndex); }
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
@@ -216,6 +289,7 @@ public partial class MainWindow : Window, IDisposable
     }
     internal void BeginRailDrag(Point screen)
     {
+        _collapseTimer.Stop();
         _dragStartScreen = screen; _dragStartTopPixels = Top * DpiScale;
         _dragPending = true; _isDragging = false; RailCanvas.CaptureMouse();
     }
@@ -278,7 +352,7 @@ public partial class MainWindow : Window, IDisposable
             var invoke = peer?.GetPattern(PatternInterface.Invoke) as IInvokeProvider;
             if (passed && invoke is not null)
             {
-                if (ViewModel.IsExpanded) ViewModel.Close(force: true);
+                if (ViewModel.IsExpanded || _cardSurfaceVisible) ViewModel.Close(force: true);
                 invoke.Invoke();
                 await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background);
                 passed = ViewModel.IsExpanded;
