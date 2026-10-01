@@ -4,7 +4,7 @@
  KeyDown="Window_KeyDown" SourceInitialized="Window_SourceInitialized" SizeChanged="Window_SizeChanged" MouseEnter="Window_MouseEnter" MouseLeave="Window_MouseLeave">
  <Canvas x:Name="RootCanvas" Width="93" Height="528" MouseRightButtonUp="Window_MouseRightButtonUp">
   <Path x:Name="CardTail" Fill="Black" Visibility="Collapsed" Data="M 300,50 C 300,75 315,80 336,89 C 315,98 300,103 300,128 Z"/>
-  <Border x:Name="UsageCard" Width="300" Height="178" CornerRadius="25" Background="Black" Visibility="Collapsed" ToolTip="Reference fixture values. No usage provider or system monitor is connected.">
+  <Border x:Name="UsageCard" Width="300" Height="178" CornerRadius="25" Background="Black" Visibility="Collapsed" AutomationProperties.HelpText="Reference fixture values. No usage provider or system monitor is connected.">
    <Grid Margin="12">
     <Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition Height="36"/><RowDefinition Height="28"/><RowDefinition Height="36"/><RowDefinition Height="28"/></Grid.RowDefinitions>
     <StackPanel Orientation="Horizontal"><Path x:Name="CardLogo" Width="24" Height="24" Stretch="Uniform" Fill="White" Margin="0,0,8,0"/><TextBlock x:Name="CardTitle" Text="Claude Usage" FontSize="17" Foreground="White" VerticalAlignment="Center"/></StackPanel>
@@ -18,9 +18,9 @@
   </Border>
   <Canvas x:Name="RailCanvas" Width="93" Height="528" PreviewMouseLeftButtonDown="Rail_MouseLeftButtonDown" PreviewMouseMove="Rail_MouseMove" PreviewMouseLeftButtonUp="Rail_MouseLeftButtonUp" LostMouseCapture="Rail_LostMouseCapture">
    <Path x:Name="RailShape" Fill="Black" Data="M 93,0 C 93,30 78,46 56,46 C 20,46 0,58 0,86 L 0,446 C 0,469 20,481 35.5,481 C 69,481 93,496 93,528 Z"/>
-   <local:RingControl x:Name="ClaudeRing" Canvas.Top="80" IconIndex="0" Percent="73" Accent="#FF3F00" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" ToolTip="Claude — reference fixture"/>
-   <local:RingControl x:Name="CodexRing" Canvas.Top="217.5" IconIndex="1" Percent="21" Accent="#00FF89" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" ToolTip="Codex — reference fixture"/>
-   <local:RingControl x:Name="RamRing" Canvas.Top="355" IconIndex="2" Percent="52" Accent="#F3FF00" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" AccessibleName="RAM reference fixture, 52 percent" ToolTip="RAM — reference fixture; no system sampling"/>
+   <local:RingControl x:Name="ClaudeRing" Canvas.Top="80" IconIndex="0" Percent="73" Accent="#FF3F00" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" AutomationProperties.HelpText="Claude — reference fixture"/>
+   <local:RingControl x:Name="CodexRing" Canvas.Top="217.5" IconIndex="1" Percent="21" Accent="#00FF89" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" AutomationProperties.HelpText="Codex — reference fixture"/>
+   <local:RingControl x:Name="RamRing" Canvas.Top="355" IconIndex="2" Percent="52" Accent="#F3FF00" MouseEnter="Ring_MouseEnter" OpenRequested="Ring_OpenRequested" AccessibleName="RAM reference fixture, 52 percent" AutomationProperties.HelpText="RAM — reference fixture; no system sampling"/>
   </Canvas>
  </Canvas>
 </Window>

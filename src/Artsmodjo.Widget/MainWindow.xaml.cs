@@ -155,7 +155,8 @@ public partial class MainWindow : Window, IDisposable
         var rings = new[] { ClaudeRing, CodexRing, RamRing };
         for (var index = 0; index < rings.Length; index++) rings[index].Percent = ViewModel.DemoDataEnabled ? RingPercent.DemoFixture[index] : null;
         var selected = (int)ViewModel.SelectedIndicator;
-        CardTitle.Text = selected switch { 0 => "Claude Usage", 1 => "Codex Usage", _ => "RAM reference" };
+        var title = selected switch { 0 => "Claude Usage", 1 => "Codex Usage", _ => "RAM reference" };
+        CardTitle.Text = ViewModel.DemoDataEnabled ? title + " · Demo" : title;
         CardLogo.Data = RingControl.LogoFor(selected);
         var session = ViewModel.DemoDataEnabled ? RingPercent.DemoFixture[selected] : null;
         var weekly = ViewModel.DemoDataEnabled && selected == 0 ? 7d : (double?)null;

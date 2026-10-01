@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Automation.Peers;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -53,10 +54,15 @@ internal static class RuntimeValidation
             await rendered.Task; Mark("rendered");
             Check(await window.ProbeStartupReadinessAsync(), "Native tray registered, Windows popup opened, and ring automation accepts input", report);
             var vm = window.ViewModel;
+            Check(window.UsageCard.ToolTip is null && window.ClaudeRing.ToolTip is null && window.CodexRing.ToolTip is null && window.RamRing.ToolTip is null, "Fixture elements have no WPF tooltips", report);
+            Check(FrameworkElementAutomationPeer.CreatePeerForElement(window.ClaudeRing)?.GetHelpText() == "Claude — reference fixture" &&
+                  FrameworkElementAutomationPeer.CreatePeerForElement(window.CodexRing)?.GetHelpText() == "Codex — reference fixture" &&
+                  FrameworkElementAutomationPeer.CreatePeerForElement(window.RamRing)?.GetHelpText() == "RAM — reference fixture; no system sampling", "Ring fixture guidance remains available as automation help text", report);
             vm.Close(force: true); window.ApplyState(false);
             await Task.Delay(220);
             Check(window.IsVisible && Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1, $"Visible collapsed window (width {window.ActualWidth}, expected {WidgetLayout.CollapsedWidth * window.WidgetScale}, railLeft {System.Windows.Controls.Canvas.GetLeft(window.RailCanvas)})", report);
             Mark($"collapsed layout left={System.Windows.Controls.Canvas.GetLeft(window.RailCanvas)} rootWidth={window.RootCanvas.Width} windowWidth={window.ActualWidth}");
+            CaptureMemorySnapshot(report, "ready-collapsed-settled");
             CaptureWindow(window, Path.Combine(outputDirectory, "window-collapsed.png"));
             CaptureRendered(window, Path.Combine(outputDirectory, "collapsed.png"), 1);
             vm.IsPinned = true; vm.Open(0); await WaitForWidth(window, WidgetLayout.ExpandedWidth);
@@ -66,6 +72,7 @@ internal static class RuntimeValidation
             CaptureRendered(window, Path.Combine(outputDirectory, "pinned.png"), 1);
             vm.IsPinned = false; vm.Close(); await WaitForWidth(window, WidgetLayout.CollapsedWidth);
             Check(Math.Abs(window.ActualWidth - WidgetLayout.CollapsedWidth * window.WidgetScale) < 1, "Collapse animation reaches final width", report);
+            CaptureMemorySnapshot(report, "after-expand-collapse-and-screenshots");
             vm.IsPinned = true; vm.Open(0); await WaitForWidth(window, WidgetLayout.ExpandedWidth);
             var primary = WidgetMonitors.PrimaryScreen;
             vm.Edge = WidgetEdge.Left; window.ApplyState(false);
@@ -80,6 +87,10 @@ internal static class RuntimeValidation
             Check(window.ClaudeRing.Percent is null && window.CodexRing.Percent is null && window.RamRing.Percent is null && window.SessionFill.Width == 0, "Disabled fixture displays unknown", report);
             CaptureRendered(window, Path.Combine(outputDirectory, "unknown.png"), 1);
             vm.DemoDataEnabled = true;
+            Check(window.CardTitle.Text == "Claude Usage · Demo", "Demo fixture labels Claude card title", report);
+            vm.SelectedIndicator = WidgetIndicator.Ram;
+            Check(window.CardTitle.Text == "RAM reference · Demo", "Demo fixture labels RAM card title", report);
+            vm.SelectedIndicator = WidgetIndicator.Claude;
             var toggle = window.TrayMenu.Single(item => item.Header == "Show / Hide");
             toggle.Action!(); Check(!window.IsVisible, "Tray hides window", report);
             toggle.Action!(); Check(window.IsVisible, "Tray restores window", report);
@@ -253,6 +264,20 @@ internal static class RuntimeValidation
         } while (clock.ElapsedMilliseconds < 2000);
         Mark($"width settle elapsed={clock.ElapsedMilliseconds} actual={window.ActualWidth} width={window.Width} base={window.GetAnimationBaseValue(Window.WidthProperty)} expanded={window.ViewModel.IsExpanded}");
     }
+    private static void CaptureMemorySnapshot(ValidationReport report, string phase)
+    {
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        process.Refresh();
+        report.MemorySnapshots.Add(new MemorySnapshot
+        {
+            Phase = phase,
+            Utc = DateTimeOffset.UtcNow,
+            WorkingSetBytes = process.WorkingSet64,
+            PrivateBytes = process.PrivateMemorySize64,
+            ProcessCpuSeconds = process.TotalProcessorTime.TotalSeconds,
+            ManagedBytesEstimate = GC.GetTotalMemory(false)
+        });
+    }
     private static void ValidateRegion(MainWindow window, ValidationReport report)
     {
         Check(window.RegionApplied, "Native window region applied", report);
@@ -304,7 +329,17 @@ internal static class RuntimeValidation
         public DateTimeOffset StartedAtUtc { get; set; }
         public DateTimeOffset FinishedAtUtc { get; set; }
         public bool AcrylicNativeAccepted { get; set; }
+        public List<MemorySnapshot> MemorySnapshots { get; } = new();
         public List<string> Assertions { get; } = new();
         public List<string> Errors { get; } = new();
+    }
+    private sealed class MemorySnapshot
+    {
+        public string Phase { get; set; } = "";
+        public DateTimeOffset Utc { get; set; }
+        public long WorkingSetBytes { get; set; }
+        public long PrivateBytes { get; set; }
+        public double ProcessCpuSeconds { get; set; }
+        public long ManagedBytesEstimate { get; set; }
     }
 }
